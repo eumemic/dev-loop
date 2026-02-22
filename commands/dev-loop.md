@@ -43,7 +43,14 @@ $ARGUMENTS
 3. Launch a **Plan** subagent (`subagent_type: "Plan"`) with:
    - The feature request
    - The summaries and file lists from the Explore agents (paste them into the prompt)
-   - Instruction to read the key files itself, then produce a concrete implementation plan covering: files to create/modify, implementation steps, key decisions, and testing approach
+   - Instruction to read the key files itself, then produce a concrete implementation plan
+
+   The plan MUST include these sections:
+   - **Files to CREATE**: new files with a description of their purpose
+   - **Files to EDIT**: existing files that must be modified, with a description of what changes are needed in each (e.g., "main.py — add import and instantiate FooEmitter in startup()"). These are the integration points — the most critical part.
+   - **Files to DELETE**: old files being replaced or removed, if any
+   - **Implementation steps**: ordered sequence of work
+   - **Testing approach**: what tests to write, and existing test patterns to follow (include actual test file paths and example patterns the agent found by grepping)
 
    The Plan agent returns the plan text.
 
@@ -65,13 +72,21 @@ $ARGUMENTS
    ```
 
 3. Launch a **Sonnet** Task subagent (`subagent_type: "general-purpose"`) with:
-   - The full implementation plan from Phase 1
-   - The list of key file paths (so the subagent can read them itself)
-   - Instruction: implement the plan, follow existing conventions, do NOT commit
+   - The full implementation plan from Phase 1 (including the CREATE/EDIT/DELETE file lists)
+   - Explicit instructions:
+
+   > **Implementation rules:**
+   > - For every file in the EDIT list: you MUST Read the file first, then Edit it. Do not skip any file in the EDIT list. These are integration points — the feature will not work without them.
+   > - For every file in the CREATE list: create it, following the conventions you see in adjacent files.
+   > - For every file in the DELETE list: delete it. Remove any imports or references to deleted files in other code.
+   > - For tests: grep for existing test patterns in the test directory first (e.g., endpoint paths, fixture patterns, assert styles). Use what you find, do not guess.
+   > - After all changes, run the project's lint/type checks if available (e.g., `ruff check --fix src/`, `mypy src/`) and fix any issues before returning.
+   > - Do NOT commit. Leave changes unstaged.
 
 4. Verify changes exist (lightweight check only):
    ```
    git diff --stat
+   git status --short
    ```
    If empty, report the issue to the user. Do NOT investigate yourself.
 
@@ -87,12 +102,16 @@ $ARGUMENTS
    git status --short
    ```
 
-2. Stage files. Use the file list from `--stat` output:
+2. Stage files. Use the file list from `--stat`/`status` output:
    ```
    git add <specific files>
    ```
 
-3. Commit:
+3. Attempt the commit. If pre-commit hooks fail (lint, type checks, tests), launch a **Sonnet** Task subagent to fix the issues:
+   - Pass it the hook error output
+   - Instruct it to read only the failing files, fix the issues, and return
+   - Re-stage and retry the commit. Repeat up to 3 times.
+
    ```
    git commit -m "feat: <concise description>"
    ```
@@ -153,7 +172,7 @@ Proceed to **Completion**.
    git diff --stat
    ```
 
-3. Commit and push:
+3. Stage, commit (with pre-commit hook retry — same as Phase 3 step 3), and push:
    ```
    git add <specific files>
    git commit -m "fix: address code review feedback"
