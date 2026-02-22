@@ -1,0 +1,10 @@
+{
+  "name": "dev-loop",
+  "version": "1.0.0",
+  "description": "End-to-end development loop: idea to reviewed PR with automated code review iterations",
+  "author": {
+    "name": "eumemic"
+  },
+  "license": "MIT",
+  "keywords": ["development", "workflow", "code-review", "pull-request", "automation"]
+}
