@@ -6,12 +6,19 @@ argument-hint: Feature description or idea
 
 # Dev Loop
 
-Orchestrate the full development lifecycle: understand the codebase, plan, implement, commit, push, open a PR, run code review, fix issues, and iterate until clean.
+You are a **thin orchestrator**. Your job is to coordinate subagents and run git commands — nothing else. You must aggressively delegate all code reading, analysis, planning, and implementation to subagents.
+
+**CRITICAL — Context discipline**: You will be alive across all phases plus multiple review iterations. To survive without compaction:
+- **NEVER** read source files yourself. Subagents read files.
+- **NEVER** run `git diff` (full diff). Use `git diff --stat` only.
+- **NEVER** read reference files yourself. Tell subagents the file path so they read it.
+- **NEVER** analyze or reason about code. Subagents analyze; you route their summaries.
+- **DO** run lightweight git/gh commands (commit, push, branch, PR create).
+- **DO** pass structured data between phases (file lists, plan text, issue lists).
 
 ## Context
 
 - Current branch: !`git branch --show-current`
-- Git status: !`git status --short`
 - Repository: !`gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "unknown"`
 
 ## Feature Request
@@ -22,159 +29,159 @@ $ARGUMENTS
 
 ## Phase 1: Understand & Plan
 
-**Goal**: Explore the codebase and design an implementation approach.
+**Goal**: Explore the codebase and produce an implementation plan. You do NOT read any code yourself.
 
-1. Parse the feature request above. If it is empty or unclear, ask the user to clarify before proceeding.
+1. If the feature request is empty or unclear, ask the user to clarify.
 
-2. Launch 2-3 **Explore** subagents in parallel to understand the relevant codebase areas. Each agent should target a different aspect:
-   - Find code similar to what needs to be built (patterns, conventions, existing utilities)
-   - Map the architecture and data flow for the affected area
-   - Identify test patterns, extension points, and integration boundaries
-   Each agent should return a list of 5-10 key files to read.
+2. Launch 2-3 **Explore** subagents in parallel to understand the relevant codebase areas. Each should target a different aspect:
+   - Patterns and conventions similar to what needs to be built
+   - Architecture and data flow for the affected area
+   - Test patterns, extension points, and integration boundaries
 
-3. Read the key files identified by the agents to build deep understanding.
+   Each agent should return: a **summary** of what it found, and a list of **key file paths**.
 
-4. Design an implementation plan covering:
-   - Which files to create or modify
-   - Key implementation decisions and trade-offs
-   - Testing approach
-   - A clear, sequential list of steps
+3. Launch a **Plan** subagent (`subagent_type: "Plan"`) with:
+   - The feature request
+   - The summaries and file lists from the Explore agents (paste them into the prompt)
+   - Instruction to read the key files itself, then produce a concrete implementation plan covering: files to create/modify, implementation steps, key decisions, and testing approach
 
-5. **Present the plan to the user for approval** using AskUserQuestion. Offer the plan as the recommended option, with an option to modify it, or to cancel. If the user wants modifications, incorporate them and re-present.
+   The Plan agent returns the plan text.
 
-   If AskUserQuestion is not available (autonomous/SDK mode), proceed with the plan as designed.
+4. **Present the plan to the user** using AskUserQuestion. Offer the plan as the recommended option, with an option to modify or cancel.
+
+   If AskUserQuestion is not available (autonomous/SDK mode), proceed with the plan.
 
 ---
 
 ## Phase 2: Branch & Implement
 
-**Goal**: Create a feature branch and implement the changes.
+**Goal**: Create a feature branch and delegate implementation to a subagent.
 
-1. Derive a short, descriptive branch name from the feature request (e.g., `feat/validate-email`, `feat/add-pagination`).
+1. Derive a short branch name from the feature request (e.g., `feat/validate-email`).
 
-2. Create the feature branch:
+2. Create the branch:
    ```
    git checkout -b <branch-name>
    ```
 
-3. Launch a fresh **Sonnet** Task subagent (`subagent_type: "general-purpose"`) with:
-   - The approved implementation plan
-   - The list of key files and codebase context gathered in Phase 1
-   - Clear instruction to implement the changes but NOT commit
-   - Instruction to follow existing code conventions and patterns
+3. Launch a **Sonnet** Task subagent (`subagent_type: "general-purpose"`) with:
+   - The full implementation plan from Phase 1
+   - The list of key file paths (so the subagent can read them itself)
+   - Instruction: implement the plan, follow existing conventions, do NOT commit
 
-4. After the subagent returns, verify that changes exist:
+4. Verify changes exist (lightweight check only):
    ```
    git diff --stat
    ```
-   If no changes were made, investigate and retry or surface the issue to the user.
+   If empty, report the issue to the user. Do NOT investigate yourself.
 
 ---
 
 ## Phase 3: Commit, Push, Open PR
 
-**Goal**: Package the changes into a PR.
+**Goal**: Package the changes into a PR. Use only lightweight git commands.
 
-1. Review all changes:
+1. Check what changed:
    ```
-   git diff
-   git status
+   git diff --stat
+   git status --short
    ```
 
-2. Stage the relevant files (prefer specific files over `git add -A`):
+2. Stage files. Use the file list from `--stat` output:
    ```
    git add <specific files>
    ```
 
-3. Create a commit with a descriptive message following conventional commits style:
+3. Commit:
    ```
-   git commit -m "feat: <concise description of what was built>"
+   git commit -m "feat: <concise description>"
    ```
 
-4. Push the branch:
+4. Push:
    ```
    git push -u origin <branch-name>
    ```
 
-5. Open a pull request:
+5. Open PR. Launch a **Haiku** Task subagent (`subagent_type: "general-purpose"`, `model: "haiku"`) with:
+   - The feature request and implementation plan summary (a few sentences, not the full plan)
+   - Instruction to craft a PR title (<70 chars) and body (summary + test plan)
+   - Return the title and body text only
+
+6. Create the PR with the subagent's output:
    ```
-   gh pr create --title "<short title>" --body "<summary of changes, approach, and any notes>"
+   gh pr create --title "<title>" --body "<body>"
    ```
 
-6. Record the PR number and URL for subsequent steps.
+7. Record the PR URL.
 
 ---
 
 ## Phase 4: Code Review
 
-**Goal**: Run a thorough, multi-agent code review on the PR.
+**Goal**: Run a thorough code review. The orchestrator does NOT read the methodology or any code.
 
-1. Read the code review methodology from `${CLAUDE_PLUGIN_ROOT}/references/code-review-methodology.md`.
+1. Launch a fresh **Sonnet** Task subagent (`subagent_type: "general-purpose"`) with this prompt:
 
-2. Launch a fresh **Sonnet** Task subagent (`subagent_type: "general-purpose"`) with:
-   - The full code review methodology as its instructions
-   - The PR number and repository name
-   - Access to `gh` commands for interacting with the PR
-   - Instruction to post findings as a PR comment AND return structured results
+   > You are performing a multi-agent code review on PR #<number> in the <repo> repository.
+   >
+   > First, read your detailed instructions from: `${CLAUDE_PLUGIN_ROOT}/references/code-review-methodology.md`
+   >
+   > Then execute the full review process described in that file. Post your findings as a PR comment via `gh pr comment`. After posting, return a structured summary:
+   > - `issue_count`: number of issues above the confidence threshold
+   > - `issues`: list of {description, confidence, file, line}
+   > - `comment_url`: URL of the posted comment
+   > - `verdict`: "pass" or "fail"
 
-3. The subagent will:
-   - Run the multi-agent code review (eligibility check, 5 parallel reviewers, confidence scoring)
-   - Post findings as a PR comment via `gh pr comment`
-   - Return structured results: `{issue_count, issues[], comment_url}`
-
-4. Receive the structured results from the subagent.
+2. Receive the structured results. Do NOT read the PR diff or review details yourself.
 
 ---
 
 ## Phase 5: Assess & Iterate
 
-**Goal**: Decide whether to fix issues, surface complications, or declare success.
+**Goal**: Route based on the review verdict. Minimal orchestrator reasoning.
 
-Evaluate the code review results:
+### Case A: `verdict == "pass"` (or `issue_count == 0`)
+Proceed to **Completion**.
 
-### Case A: No issues above threshold
-The review passed. Proceed to **Completion**.
+### Case B: Actionable issues
+1. Launch a fresh **Sonnet** Task subagent (`subagent_type: "general-purpose"`) with:
+   - The list of issues from the review (descriptions, files, lines)
+   - Instruction: read the flagged files, make minimal targeted fixes, do NOT commit
 
-### Case B: Actionable issues found
-1. Analyze the review findings and plan targeted fixes.
-2. Launch a fresh **Sonnet** Task subagent (`subagent_type: "general-purpose"`) to implement the fixes:
-   - Provide the specific issues to fix (descriptions, files, lines)
-   - Provide codebase context from Phase 1
-   - Instruct it to make minimal, targeted changes — fix only what was flagged
-   - Instruct it NOT to commit
-3. Verify changes exist via `git diff --stat`.
-4. Commit the fixes:
+2. Verify changes:
+   ```
+   git diff --stat
+   ```
+
+3. Commit and push:
    ```
    git add <specific files>
    git commit -m "fix: address code review feedback"
-   ```
-5. Push to the same branch:
-   ```
    git push
    ```
-6. **Go back to Phase 4** (code review) for the next iteration.
 
-### Case C: Unanticipated complications
-If the review surfaces issues that suggest fundamental problems with the approach (architectural flaws, missing requirements, scope creep), surface these to the user and wait for guidance before continuing. Use AskUserQuestion if available.
+4. **Go back to Phase 4.**
+
+### Case C: Fundamental problems
+If the review subagent reports architectural flaws, missing requirements, or scope issues, surface them to the user via AskUserQuestion. Do NOT attempt to analyze or fix them yourself.
 
 ---
 
 ## Completion
 
-Report the results:
-
-1. **PR URL** — link to the pull request
-2. **Summary** — what was built and the approach taken
-3. **Review iterations** — how many code review cycles were needed
-4. **Notes** — any caveats, remaining TODOs, or follow-up suggestions
+Report (keep it brief):
+1. **PR URL**
+2. **Summary** — one sentence on what was built
+3. **Review iterations** — count
+4. **Notes** — any caveats or follow-ups
 
 ---
 
-## Guidelines
+## Reminders
 
-- **Subagent isolation**: Each implementation and review subagent runs in a fresh context. This prevents context pollution between iterations.
-- **Minimal changes**: Fix subagents should only address flagged issues, not refactor or improve adjacent code.
-- **No build verification**: Do not run builds, linters, or type checkers. Those are handled by CI.
-- **Conventional commits**: Use `feat:`, `fix:`, `refactor:` etc. prefixes.
-- **Specific staging**: Always `git add` specific files rather than `git add -A` or `git add .`.
-- **Full SHA in links**: When linking to code in PR comments, always use the full git SHA.
+- You are a **coordinator**, not an implementor. If you catch yourself reading source files or analyzing code, STOP and delegate to a subagent instead.
+- Each subagent runs in a fresh context — no accumulated baggage.
+- Use `git diff --stat` (not `git diff`) for all change verification.
+- Use `git status --short` (not `git status`) for status checks.
+- Conventional commits: `feat:`, `fix:`, `refactor:` prefixes.
+- Stage specific files, never `git add -A` or `git add .`.
